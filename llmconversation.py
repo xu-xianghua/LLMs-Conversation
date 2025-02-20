@@ -6,22 +6,34 @@ import openai
 
 app = Flask(__name__)
 
-# Ollama API endpoints
-OLLAMA_API_1 = "http://localhost:11434/api/chat"
-model_1 = "qwen2.5:14b"
-OLLAMA_API_2 = "http://localhost:11434/api/chat"
-model_2 = "deepseek-r1:32b"
-
-# openai-like api setting
-api_url_1 = "https://integrate.api.nvidia.com/v1"
-api_key_1 = "YOUR_API_KEY"
-api_model_1 = "deepseek-ai/deepseek-r1"
-api_client_1 = None
-
-api_url_2 = "https://integrate.api.nvidia.com/v1"
-api_key_2 = "YOUR_API_KEY"
-api_model_2 = "deepseek-ai/deepseek-r1"
-api_client_2 = None
+# LLM model settings, using OpenAI-like API
+llm_model = {
+    "deepseek-r1:32b": {
+        "model": "deepseek-r1:32b",
+        "url": "http://localhost:11434/v1",
+        "key": "ollama"
+    },
+    "deepseek-r1:16b": {
+        "model": "deepseek-r1:64b",
+        "url": "http://localhost:11434/v1",
+        "key": "ollama"
+    },
+    "qwen2.5:32b": {
+        "model": "qwen2.5:32b",
+        "url": "http://localhost:11434/v1",
+        "key": "ollama"
+    },
+    "deepseek-r1": {
+        "model": "deepseek-ai/deepseek-r1",
+        "url": "https://integrate.api.nvidia.com/v1",
+        "key": "YOUR_KEY_HERE"
+    },
+    "Gemini1.5-flash": {
+        "model": "Gemini 1.5 Flash",
+        "url": "https://generativelanguage.googleapis.com",
+        "key": "YOUR_KEY_HERE"
+    }
+}
 
 # Global variables to control the conversation
 conversation_active = False
@@ -161,15 +173,17 @@ HTML_TEMPLATE = """
                 <input type="text" id="model1-identity" name="model1_identity" value="孔子" required>
                 <label for="model1-type">模型类型:</label>
                 <select id="model1-type" name="model1_type">
-                    <option value="ollama">Ollama</option>
-                    <option value="openai">API</option>
+                        {% for model in models %}
+                        <option value="{{ model }}">{{ model }}</option>
+                        {% endfor %}
                 </select>
                 <label for="model2-identity">角色2:</label>
                 <input type="text" id="model2-identity" name="model2_identity" value="老子" required>
                 <label for="model2-type">模型类型:</label>
                 <select id="model2-type" name="model1_type">
-                    <option value="ollama">Ollama</option>
-                    <option value="openai">API</option>
+                        {% for model in models %}
+                        <option value="{{ model }}">{{ model }}</option>
+                        {% endfor %}
                 </select>
             </div>
             <div class="scene">
@@ -295,6 +309,10 @@ HTML_TEMPLATE = """
 </body>
 </html>
 """
+def create_llm_client(model: str) -> openai.OpenAI:
+    """ Create an OpenAI client for the specified model. if the model is not found, return the 1st model """
+    model_info = llm_model.get(model, next(iter(llm_model.values())))
+    return openai.OpenAI(base_url=model_info["url"], api_key=model_info["key"]), model_info["model"]
 
 def strip_think(response):
     """ strip the think part between <think> and </think> from the response """
@@ -303,17 +321,6 @@ def strip_think(response):
     if start != -1 and end != -1:
         return response[:start] + response[end + len("</think>"):]
     return response
-
-def generate_response_ollama(prompt, api_url, model):
-    try:
-        response = requests.post(api_url, json={"model": model, "messages": prompt, "stream": False}, stream=False)
-        response.raise_for_status()
-        response = response.json()["message"]["content"]
-        response = strip_think(response)
-        return response
-    except requests.exceptions.RequestException as e:
-        print(f"Error: {e}")
-        return "Error: Unable to generate response"
 
 def generate_response_api(prompt, model, api_client):
     try:
@@ -328,17 +335,16 @@ def generate_response_api(prompt, model, api_client):
         return "Error: Unable to generate response"
 
 def start_conversation(model1_identity, model2_identity, scene, model1_type, model2_type):
-    global conversation_active, conversation_history, api_client_1, api_client_2
+    global conversation_active, conversation_history
     with conversation_lock:
         conversation_active = True
         conversation_history = []
-        conversation_history_1 = []
-        conversation_history_2 = []
-        end1, end2 = False, False
-        if model1_type != "ollama":
-            api_client_1 = openai.OpenAI(base_url=api_url_1, api_key=api_key_1)
-        if model2_type != "ollama":
-            api_client_2 = openai.OpenAI(base_url=api_url_2, api_key=api_key_2)
+        
+    conversation_history_1 = []
+    conversation_history_2 = []
+    end1, end2 = False, False
+    api_client_1, api_model_1 = create_llm_client(model1_type)
+    api_client_2, api_model_2 = create_llm_client(model2_type)
 
     prompt1 = f"{scene} 你的角色是 {model1_identity}, 你将要和 {model2_identity} 开展一场对话。你先开始吧。"
     conversation_history_1.append({"role": "user", "content": prompt1})
@@ -347,10 +353,7 @@ def start_conversation(model1_identity, model2_identity, scene, model1_type, mod
 
     while conversation_active and not stop_event.is_set():
         # Model 1 generates a response
-        if model1_type == "ollama":
-            response1 = generate_response_ollama(conversation_history_1, OLLAMA_API_1, model_1)
-        else:
-            response1 = generate_response_api(conversation_history_1, api_model_1, api_client_1)
+        response1 = generate_response_api(conversation_history_1, api_model_1, api_client_1)
         conversation_history_1.append({"role": "assistant", "content": response1})
         conversation_history_2.append({"role": "user", "content": response1})
         conversation_history.append(response1)
@@ -364,10 +367,7 @@ def start_conversation(model1_identity, model2_identity, scene, model1_type, mod
             break
 
         # Model 2 generates a response
-        if model2_type == "ollama":
-            response2 = generate_response_ollama(conversation_history_2, OLLAMA_API_2, model_2)
-        else:
-            response2 = generate_response_api(conversation_history_2, api_model_2, api_client_2)
+        response2 = generate_response_api(conversation_history_2, api_model_2, api_client_2)
         conversation_history_2.append({"role": "assistant", "content": response2})
         conversation_history_1.append({"role": "user", "content": response2})
         conversation_history.append(response2)
@@ -386,7 +386,8 @@ def start_conversation(model1_identity, model2_identity, scene, model1_type, mod
 
 @app.route("/")
 def index():
-    return render_template_string(HTML_TEMPLATE)
+    models_name = list(llm_model.keys())
+    return render_template_string(HTML_TEMPLATE, models=models_name)
 
 @app.route("/start_conversation", methods=["POST"])
 def start_conversation_route():
@@ -419,4 +420,4 @@ def get_conversation():
     return jsonify({"conversation": conversation_history, "active": conversation_active})
 
 if __name__ == "__main__":
-    app.run(debug=True, port=5000)
+    app.run(debug=True, port=5003)
