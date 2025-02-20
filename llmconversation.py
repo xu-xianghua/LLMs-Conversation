@@ -13,11 +13,6 @@ llm_model = {
         "url": "http://localhost:11434/v1",
         "key": "ollama"
     },
-    "deepseek-r1:16b": {
-        "model": "deepseek-r1:64b",
-        "url": "http://localhost:11434/v1",
-        "key": "ollama"
-    },
     "qwen2.5:32b": {
         "model": "qwen2.5:32b",
         "url": "http://localhost:11434/v1",
@@ -207,7 +202,11 @@ HTML_TEMPLATE = """
                 </div>
                 <div class="scene">
                     <label for="scene">场景:</label>
-                    <textarea id="scene" rows="4" name="scene">相传春秋时，孔子和老子有过一次相遇，他们聊了些什么呢？现在模拟他们当时的对话，你只需要说自己角色的对话，一人一句。对话10轮后，如果想结束谈话，则在对话的最后输出<end>标记。</textarea>
+                    <textarea id="scene" rows="6" name="scene">相传春秋时，孔子和老子有过一次相遇，他们聊了些什么呢？现在模拟他们当时的对话，你只需要说自己角色的对话，一人一句。对话10轮后，如果想结束谈话，则在对话的最后输出<end>标记。</textarea>
+                </div>
+                <div class="rounds">
+                    <label for="max-rounds">最大对话轮次:</label>
+                    <input type="number" id="max-round" name="max-round" value=10 min="5" max="100" step="1" required>
                 </div>
             </form>
             <div class="controls">
@@ -288,6 +287,7 @@ HTML_TEMPLATE = """
             const model1Type = document.getElementById("model1-type").value;
             const model2Type = document.getElementById("model2-type").value;
             const scene = document.getElementById("scene").value;
+            const maxRound = document.getElementById("max-round").value;
 
             fetch("/start_conversation", {
                 method: "POST",
@@ -299,7 +299,8 @@ HTML_TEMPLATE = """
                     model2_identity: model2Identity,
                     model1_type: model1Type,
                     model2_type: model2Type,
-                    scene: scene
+                    scene: scene,
+                    max_round: maxRound
                 })
             }).then(() => {
                 startBtn.disabled = true;
@@ -347,7 +348,7 @@ def strip_think(response):
         return response[:start] + response[end + len("</think>"):]
     return response
 
-def generate_response_api(prompt, model, api_client):
+def generate_response(prompt, model, api_client):
     try:
         response = api_client.chat.completions.create(
             model=model,
@@ -359,7 +360,7 @@ def generate_response_api(prompt, model, api_client):
         print(f"API Error: {e}")
         return f"Error: Unable to generate response. Please check the API settings. Error: {e}", False
 
-def start_conversation(model1_identity, model2_identity, scene, model1_type, model2_type):
+def start_conversation(model1_identity, model2_identity, scene, model1_type, model2_type, max_round):
     global conversation_active, conversation_history
     with conversation_lock:
         conversation_active = True
@@ -371,9 +372,12 @@ def start_conversation(model1_identity, model2_identity, scene, model1_type, mod
     api_client_1, api_model_1 = create_llm_client(model1_type)
     api_client_2, api_model_2 = create_llm_client(model2_type)
 
-    while conversation_active and not stop_event.is_set():
-        # Model 1 generates a response
-        response1 = generate_response_api(conversation_history_1, api_model_1, api_client_1)
+    for round in range(max_round):
+        response1, status = generate_response(conversation_history_1, api_model_1, api_client_1)
+        with conversation_lock:
+            conversation_history.append(response1)
+        if not status:
+            break
         conversation_history_1.append({"role": "assistant", "content": response1})
         conversation_history_2.append({"role": "user", "content": response1})
         if "<end>" in response1:
@@ -385,8 +389,11 @@ def start_conversation(model1_identity, model2_identity, scene, model1_type, mod
         if stop_event.is_set():
             break
 
-        # Model 2 generates a response
-        response2 = generate_response_api(conversation_history_2, api_model_2, api_client_2)
+        response2, status = generate_response(conversation_history_2, api_model_2, api_client_2)
+        with conversation_lock:
+            conversation_history.append(response2)
+        if not status:
+            break
         conversation_history_2.append({"role": "assistant", "content": response2})
         conversation_history_1.append({"role": "user", "content": response2})
         if "<end>" in response2:
@@ -415,8 +422,9 @@ def start_conversation_route():
     scene = data.get("scene")
     model1_type = data.get("model1_type")
     model2_type = data.get("model2_type")
+    max_round = int(data.get("max_round"))
 
-    thread = threading.Thread(target=start_conversation, args=(model1_identity, model2_identity, scene, model1_type, model2_type))
+    thread = threading.Thread(target=start_conversation, args=(model1_identity, model2_identity, scene, model1_type, model2_type, max_round))
     thread.start()
     return jsonify({"status": "started"})
 
