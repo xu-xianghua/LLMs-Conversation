@@ -446,4 +446,4 @@ def get_conversation():
     return jsonify({"conversation": conversation_history, "active": conversation_active})
 
 if __name__ == "__main__":
-    app.run(debug=True, port=5003)
+    app.run(debug=True, port=5000)
