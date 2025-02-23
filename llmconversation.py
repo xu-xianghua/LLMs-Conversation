@@ -366,8 +366,8 @@ def start_conversation(model1_identity, model2_identity, scene, model1_type, mod
         conversation_active = True
         conversation_history = []
         
-    conversation_history_1 = [{"role": "user", "content": f"{scene} 你的角色是 {model1_identity}, 你将要和 {model2_identity} 开展一场对话。你先开始吧。"}]
-    conversation_history_2 = [{"role": "user", "content": f"{scene} 你的角色是 {model2_identity}, 你将要和 {model1_identity} 开展一场对话。他先开口说话了。"}]
+    conversation_history_1 = [{"role": "system", "content": f"{scene} 你的角色是 {model1_identity}, 你将要和用户扮演的 {model2_identity} 开展一场对话。你先开始吧。"}]
+    conversation_history_2 = [{"role": "system", "content": f"{scene} 你的角色是 {model2_identity}, 你将要和用户扮演的 {model1_identity} 开展一场对话。他先开口说话了。"}]
     end1, end2 = False, False
     api_client_1, api_model_1 = create_llm_client(model1_type)
     api_client_2, api_model_2 = create_llm_client(model2_type)
